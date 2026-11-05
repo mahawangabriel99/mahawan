@@ -1,31 +1,54 @@
+
 require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const neo4j = require("neo4j-driver");
+const crypto = require("crypto");
+const { promisify } = require("util");
+
+const scryptAsync = promisify(crypto.scrypt);
 
 const app = express();
 
+// ==========================================
+// CORS CONFIGURATION
+// ==========================================
+
 const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5000',
+  "http://localhost:3000",
+  "http://localhost:5000",
+  "http://localhost:8080",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
 
-    return callback(new Error('Origin not allowed by CORS'));
-  },
-}));
+      console.log("Blocked CORS origin:", origin);
+      return callback(new Error("Origin not allowed by CORS"));
+    },
+  })
+);
 
 app.use(express.json());
 
 // ==========================================
 // NEO4J CONNECTION
 // ==========================================
+
+if (
+  !process.env.NEO4J_URI ||
+  !process.env.NEO4J_USERNAME ||
+  !process.env.NEO4J_PASSWORD
+) {
+  console.error("ERROR: Missing Neo4j environment variables.");
+  process.exit(1);
+}
 
 const driver = neo4j.driver(
   process.env.NEO4J_URI,
@@ -45,40 +68,40 @@ const categoryLabels = {
   Earthquake: "Earthquake",
   Landslide: "Landslide",
   Medical: "Medical",
-  Other: "Other"
+  Other: "Other",
 };
 
 // ==========================================
-// TEST API
+// HOME / TEST API
 // ==========================================
 
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "AlertAgos API is running!"
+    message: "AlertAgos API is running!",
   });
 });
 
 // ==========================================
-// TEST NEO4J CONNECTION
+// HEALTH CHECK
 // ==========================================
 
 app.get("/health", async (req, res) => {
   try {
     await driver.verifyConnectivity();
 
-    res.json({
+    return res.json({
       success: true,
       status: "success",
-      database: "Neo4j connected"
+      database: "Neo4j connected",
     });
   } catch (error) {
     console.error("Neo4j connection error:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       status: "error",
-      database: "Connection failed"
+      database: "Connection failed",
     });
   }
 });
@@ -93,7 +116,7 @@ app.post("/api/signup", async (req, res) => {
   if (!name || !email || !phone || !password) {
     return res.status(400).json({
       success: false,
-      message: "Please complete all signup fields."
+      message: "Please complete all signup fields.",
     });
   }
 
@@ -105,7 +128,7 @@ app.post("/api/signup", async (req, res) => {
   ) {
     return res.status(400).json({
       success: false,
-      message: "Invalid email or password."
+      message: "Invalid email or password.",
     });
   }
 
@@ -113,19 +136,29 @@ app.post("/api/signup", async (req, res) => {
 
   try {
     const existing = await session.run(
-      "MATCH (u:User {email: $email}) RETURN u LIMIT 1",
+      `
+      MATCH (u:User {email: $email})
+      RETURN u
+      LIMIT 1
+      `,
       { email: normalizedEmail }
     );
 
     if (existing.records.length > 0) {
       return res.status(409).json({
         success: false,
-        message: "Email is already registered. Please sign in."
+        message: "Email is already registered. Please sign in.",
       });
     }
 
     const salt = crypto.randomBytes(16).toString("hex");
-    const hash = await scryptAsync(String(password), salt, 64);
+
+    const hash = await scryptAsync(
+      String(password),
+      salt,
+      64
+    );
+
     const userId = "U-" + crypto.randomUUID();
 
     await session.run(
@@ -148,11 +181,11 @@ app.post("/api/signup", async (req, res) => {
         email: normalizedEmail,
         phone: String(phone).trim(),
         password_hash: hash.toString("hex"),
-        password_salt: salt
+        password_salt: salt,
       }
     );
 
-    console.log(`New resident registered: ${normalizedEmail}`);
+    console.log("New resident registered:", normalizedEmail);
 
     return res.status(201).json({
       success: true,
@@ -161,15 +194,15 @@ app.post("/api/signup", async (req, res) => {
         user_id: userId,
         name: String(name).trim(),
         email: normalizedEmail,
-        phone: String(phone).trim()
-      }
+        phone: String(phone).trim(),
+      },
     });
   } catch (error) {
     console.error("Signup error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to create account."
+      message: "Failed to create account.",
     });
   } finally {
     await session.close();
@@ -186,7 +219,7 @@ app.post("/api/login", async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({
       success: false,
-      message: "Please enter your email and password."
+      message: "Please enter your email and password.",
     });
   }
 
@@ -213,7 +246,7 @@ app.post("/api/login", async (req, res) => {
     if (result.records.length === 0) {
       return res.status(401).json({
         success: false,
-        message: "Wrong email or password."
+        message: "Wrong email or password.",
       });
     }
 
@@ -228,7 +261,7 @@ app.post("/api/login", async (req, res) => {
     ) {
       return res.status(401).json({
         success: false,
-        message: "This account cannot be verified. Please contact support."
+        message: "This account cannot be verified. Please contact support.",
       });
     }
 
@@ -247,11 +280,11 @@ app.post("/api/login", async (req, res) => {
     if (!passwordMatches) {
       return res.status(401).json({
         success: false,
-        message: "Wrong email or password."
+        message: "Wrong email or password.",
       });
     }
 
-    console.log(`Resident logged in: ${normalizedEmail}`);
+    console.log("Resident logged in:", normalizedEmail);
 
     return res.status(200).json({
       success: true,
@@ -260,15 +293,15 @@ app.post("/api/login", async (req, res) => {
         user_id: record.get("user_id"),
         name: record.get("name"),
         email: record.get("email"),
-        phone: record.get("phone")
-      }
+        phone: record.get("phone"),
+      },
     });
   } catch (error) {
     console.error("Login error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Unable to sign in. Please try again."
+      message: "Unable to sign in. Please try again.",
     });
   } finally {
     await session.close();
@@ -287,13 +320,13 @@ app.post("/api/reports", async (req, res) => {
     zone,
     landmark,
     details,
-    time
+    time,
   } = req.body;
 
   if (!resident_name || !type || !zone || !details) {
     return res.status(400).json({
       success: false,
-      message: "Please complete all required report fields."
+      message: "Please complete all required report fields.",
     });
   }
 
@@ -302,7 +335,7 @@ app.post("/api/reports", async (req, res) => {
   if (!categoryLabel) {
     return res.status(400).json({
       success: false,
-      message: "Invalid incident type."
+      message: "Invalid incident type.",
     });
   }
 
@@ -343,10 +376,10 @@ app.post("/api/reports", async (req, res) => {
       user_id: user_id || "",
       resident_name: String(resident_name).trim(),
       type,
-      zone,
-      landmark: (landmark || "").trim(),
+      zone: String(zone).trim(),
+      landmark: String(landmark || "").trim(),
       details: String(details).trim(),
-      reported_at: time || new Date().toISOString()
+      reported_at: time || new Date().toISOString(),
     });
 
     if (result.records.length === 0) {
@@ -359,14 +392,14 @@ app.post("/api/reports", async (req, res) => {
       success: true,
       message: `${type} report saved successfully!`,
       report_id: reportId,
-      category: type
+      category: type,
     });
   } catch (error) {
     console.error("Report submission error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to save incident report to Neo4j."
+      message: "Failed to save incident report to Neo4j.",
     });
   } finally {
     await session.close();
@@ -399,7 +432,7 @@ app.get("/api/reports", async (req, res) => {
       ORDER BY f.created_at DESC
     `);
 
-    const reports = result.records.map(record => ({
+    const reports = result.records.map((record) => ({
       report_id: record.get("report_id"),
       user_id: record.get("user_id"),
       resident_name: record.get("resident_name"),
@@ -409,20 +442,20 @@ app.get("/api/reports", async (req, res) => {
       details: record.get("details"),
       status: record.get("status"),
       reported_at: record.get("reported_at"),
-      created_at: record.get("created_at")
+      created_at: record.get("created_at"),
     }));
 
     return res.json({
       success: true,
       total: reports.length,
-      reports
+      reports,
     });
   } catch (error) {
     console.error("Retrieve reports error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to retrieve incident reports."
+      message: "Failed to retrieve incident reports.",
     });
   } finally {
     await session.close();
@@ -458,7 +491,7 @@ app.get("/api/reports/user/:userId", async (req, res) => {
       { user_id: req.params.userId }
     );
 
-    const reports = result.records.map(record => ({
+    const reports = result.records.map((record) => ({
       report_id: record.get("report_id"),
       user_id: record.get("user_id"),
       resident_name: record.get("resident_name"),
@@ -468,20 +501,20 @@ app.get("/api/reports/user/:userId", async (req, res) => {
       details: record.get("details"),
       status: record.get("status"),
       reported_at: record.get("reported_at"),
-      created_at: record.get("created_at")
+      created_at: record.get("created_at"),
     }));
 
     return res.json({
       success: true,
       total: reports.length,
-      reports
+      reports,
     });
   } catch (error) {
     console.error("User reports error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to retrieve resident reports."
+      message: "Failed to retrieve resident reports.",
     });
   } finally {
     await session.close();
@@ -494,19 +527,32 @@ app.get("/api/reports/user/:userId", async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`AlertAgos API running on port ${PORT}`);
 });
+
 // ==========================================
 // GRACEFUL SHUTDOWN
 // ==========================================
 
+let shuttingDown = false;
+
 async function shutdown() {
+  if (shuttingDown) return;
+
+  shuttingDown = true;
+
   console.log("Closing AlertAgos server...");
 
   server.close(async () => {
-    await driver.close();
-    process.exit(0);
+    try {
+      await driver.close();
+      console.log("Neo4j connection closed.");
+      process.exit(0);
+    } catch (error) {
+      console.error("Shutdown error:", error);
+      process.exit(1);
+    }
   });
 }
 
